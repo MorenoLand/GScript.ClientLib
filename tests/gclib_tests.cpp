@@ -92,13 +92,6 @@ void test_senders() {
     }
     {
         SenderFixture f;
-        const char* args[] = {"7", "-4", "6", "level.nw"};
-        CHECK(gc_rc_send(f.gc, "warp_player", args, 4, nullptr, 0) == 1);
-        CHECK(f.last_id() == 82);
-        CHECK(f.last() == cat(Bytes({32, 39, 28, 38}), "level.nw"));
-    }
-    {
-        SenderFixture f;
         int ids[] = {7, 300};
         gc_send_private_message(f.gc, ids, 2, "hello");
         CHECK(f.last_id() == 28);
@@ -163,17 +156,6 @@ void test_senders() {
         CHECK(f.last_id() == 39 && f.last().size() == 10);
         gc_send_npc_server_query(f.gc, 7, "hi");
         CHECK(f.last_id() == 94 && f.last() == Bytes({32, 39, 'h', 'i'}));
-    }
-    {
-        SenderFixture f;
-        const char* args[] = {"lister", "serverinfo"};
-        CHECK(gc_rc_send(f.gc, "set_server_options", args, 2, nullptr, 0) == 1);
-        CHECK(f.last_id() == 52 && f.last() == Bytes({'l', 'i', 's', 't', 'e', 'r', ',', 's', 'e', 'r', 'v', 'e', 'r', 'i', 'n', 'f', 'o'}));
-        const char* bad[] = {"x"};
-        CHECK(gc_rc_send(f.gc, "no_such_command", bad, 1, nullptr, 0) == 0);
-        const char* npc[] = {"1000"};
-        CHECK(gc_nc_send(f.gc, "get_npc", npc, 1, nullptr, 0) == 1);
-        CHECK(f.last_id() == 103 && f.last() == Bytes({32, 39, 136}));
     }
 }
 

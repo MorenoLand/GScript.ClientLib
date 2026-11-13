@@ -94,113 +94,12 @@ std::string json_text(const std::string& value) {
     return out + "\"";
 }
 
-struct CommandSpec {
-    const char* name;
-    int packet_id;
-    const char* spec;
-};
 
 // Spec letters: s = length-prefixed string, S = rest-of-packet string, w = string with 2-char length prefix,
 // c = one-char integer, h = two-char integer, i = three-char integer, l = five-char integer, b = flag,
 // B = binary blob argument, L = remaining arguments as length-prefixed strings, k = counted list of
 // length-prefixed strings, T = remaining arguments as one comma-quoted token string.
-const CommandSpec kRemoteCommands[] = {
-    {"get_server_options", 51, ""}, {"set_server_options", 52, "T"},
-    {"get_folder_config", 53, ""}, {"set_folder_config", 54, "T"},
-    {"set_respawn", 55, "B"}, {"set_horse_life", 56, "B"}, {"set_ap_increment", 57, "B"}, {"set_baddy_respawn", 58, "B"},
-    {"get_player_props", 59, ""}, {"set_player_props", 60, "hB"},
-    {"disconnect_player", 61, "hS"}, {"update_levels", 62, "k"},
-    {"admin_message", 63, "S"}, {"private_admin_message", 64, "hS"},
-    {"list_rcs", 65, ""}, {"disconnect_rc", 66, ""}, {"apply_reason", 67, "B"},
-    {"get_server_flags", 68, ""}, {"set_server_flags", 69, "k"},
-    {"account_add", 70, "sssbbc"}, {"account_del", 71, "S"}, {"get_account_list", 72, "ss"},
-    {"get_player_props_by_id", 73, "h"}, {"get_player_props_by_account", 74, "s"},
-    {"reset_player_props", 75, "S"}, {"set_player_props_by_account", 76, "sB"},
-    {"get_account", 77, "S"}, {"set_account", 78, "sssbbcss"},
-    {"chat", 79, "S"}, {"warp_player", 82, "hccS"},
-    {"get_rights", 83, "s"}, {"set_rights", 84, "slsw"},
-    {"get_comments", 85, "s"}, {"set_comments", 86, "sS"},
-    {"get_ban", 87, "s"}, {"set_ban", 88, "sbS"},
-    {"file_browser_start", 89, ""}, {"file_browser_cd", 90, "S"}, {"file_browser_end", 91, ""},
-    {"file_browser_download", 92, "S"}, {"file_browser_upload", 93, "sB"},
-    {"file_browser_move", 96, "sS"}, {"file_browser_delete", 97, "S"}, {"file_browser_rename", 98, "ss"},
-    {"folder_delete", 160, "S"}, {"large_file_start", 155, "S"}, {"large_file_end", 156, "S"},
-    {"blank_162", 162, ""},
-};
 
-const CommandSpec kNpcCommands[] = {
-    {"get_npc", 103, "i"}, {"delete_npc", 104, "i"}, {"reset_npc", 105, "i"}, {"get_npc_script", 106, "i"},
-    {"warp_npc", 107, "iccS"}, {"get_npc_flags", 108, "i"}, {"set_npc_script", 109, "iT"},
-    {"set_npc_flags", 110, "iL"}, {"add_npc", 111, "T"}, {"class_edit", 112, "S"}, {"class_add", 113, "sL"},
-    {"local_npcs_get", 114, "S"}, {"weapon_list_get", 115, ""}, {"weapon_get", 116, "S"},
-    {"weapon_add", 117, "ssS"}, {"weapon_delete", 118, "S"}, {"class_delete", 119, "S"},
-    {"level_list_get", 150, ""}, {"level_list_set", 151, "L"},
-};
-
-bool build_command(const CommandSpec& cmd, const char* const* args, int arg_count, const void* blob, int blob_length, std::vector<uint8_t>& out) {
-    int ai = 0;
-    auto next = [&]() -> const char* { return ai < arg_count && args ? args[ai++] : ""; };
-    for (const char* sp = cmd.spec; *sp; ++sp) {
-        switch (*sp) {
-        case 's': write_gstring(out, next()); break;
-        case 'S': put_text(out, next()); break;
-        case 'w': {
-            std::string s = next();
-            write_gshort(out, static_cast<int>(s.size()));
-            out.insert(out.end(), s.begin(), s.end());
-            break;
-        }
-        case 'c': write_gchar(out, std::atoi(next())); break;
-        case 'h': write_gshort(out, std::atoi(next())); break;
-        case 'i': write_gint3(out, std::atoi(next())); break;
-        case 'l': put_g5(out, std::atoll(next())); break;
-        case 'b': {
-            const char* v = next();
-            bool on = v && (*v == '1' || *v == 't' || *v == 'T' || *v == 'y' || *v == 'Y');
-            write_gchar(out, on ? 1 : 0);
-            break;
-        }
-        case 'B':
-            if (blob && blob_length > 0) {
-                const uint8_t* p = static_cast<const uint8_t*>(blob);
-                out.insert(out.end(), p, p + blob_length);
-            }
-            break;
-        case 'L':
-            while (ai < arg_count) write_gstring(out, next());
-            break;
-        case 'k': {
-            int remaining = std::max(0, arg_count - ai);
-            write_gshort(out, remaining);
-            while (ai < arg_count) write_gstring(out, next());
-            break;
-        }
-        case 'T': {
-            std::vector<std::string> items;
-            while (ai < arg_count) items.push_back(next());
-            put_text(out, csv_join(items).c_str());
-            break;
-        }
-        default:
-            return false;
-        }
-    }
-    return true;
-}
-
-int send_command(GCHandle handle, const CommandSpec* table, size_t table_size, const char* command, const char* const* args, int arg_count, const void* blob, int blob_length) {
-    auto* gc = as_client(handle);
-    if (!gc || !command) return 0;
-    for (size_t n = 0; n < table_size; ++n) {
-        if (std::strcmp(table[n].name, command) != 0) continue;
-        std::vector<uint8_t> data;
-        if (!build_command(table[n], args, arg_count, blob, blob_length, data)) return 0;
-        return gc_send_packet(handle, table[n].packet_id, data.data(), static_cast<int>(data.size()));
-    }
-    std::lock_guard<std::mutex> lock(gc->cb_mutex);
-    gc->last_error = std::string("Unknown command: ") + command;
-    return 0;
-}
 
 #ifdef GCLIB_LISTSERVER
 std::string read_entry(TPacketReader& r) {
@@ -605,14 +504,6 @@ GCLIB_API char* gc_decode_packet_json(int packet_id, const void* data, int lengt
     std::string json;
     if (!tclient_decode_json(packet_id, payload, json)) return copy_for_abi("null");
     return copy_for_abi(json);
-}
-
-GCLIB_API int gc_rc_send(GCHandle handle, const char* command, const char* const* args, int arg_count, const void* blob, int blob_length) {
-    return send_command(handle, kRemoteCommands, sizeof(kRemoteCommands) / sizeof(kRemoteCommands[0]), command, args, arg_count, blob, blob_length);
-}
-
-GCLIB_API int gc_nc_send(GCHandle handle, const char* command, const char* const* args, int arg_count, const void* blob, int blob_length) {
-    return send_command(handle, kNpcCommands, sizeof(kNpcCommands) / sizeof(kNpcCommands[0]), command, args, arg_count, blob, blob_length);
 }
 
 #ifdef GCLIB_LISTSERVER

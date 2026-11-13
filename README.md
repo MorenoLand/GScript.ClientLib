@@ -214,14 +214,6 @@ The Gen5 cipher starts from a built-in default seed, so a normal connection need
 
 `gc_get_state_json(handle, kind)` returns a JSON copy of cached state. Kinds: `players`, `level`, `npcs`, `flags`, `weapons`, `horses`, `baddies`, `items`, `bombs`, `chests`, `signs`, `links`, and `session` (active level, freeze, leader, world time, net cookie, server options, update package). Level-scoped kinds reset when a new level begins.
 
-### Remote Control And NPC Control Commands
-
-`gc_rc_send(handle, command, args, arg_count, blob, blob_length)` and `gc_nc_send` build the packet for a named command from string arguments, so wrappers never assemble these payloads. Unknown commands return 0 and set the last error.
-
-Remote control commands: `get_server_options`, `set_server_options`, `get_folder_config`, `set_folder_config`, `set_respawn`, `set_horse_life`, `set_ap_increment`, `set_baddy_respawn`, `get_player_props`, `set_player_props`, `disconnect_player`, `update_levels`, `admin_message`, `private_admin_message`, `list_rcs`, `disconnect_rc`, `apply_reason`, `get_server_flags`, `set_server_flags`, `account_add`, `account_del`, `get_account_list`, `get_player_props_by_id`, `get_player_props_by_account`, `reset_player_props`, `set_player_props_by_account`, `get_account`, `set_account`, `chat`, `warp_player`, `get_rights`, `set_rights`, `get_comments`, `set_comments`, `get_ban`, `set_ban`, `file_browser_start`, `file_browser_cd`, `file_browser_end`, `file_browser_download`, `file_browser_upload`, `file_browser_move`, `file_browser_delete`, `file_browser_rename`, `folder_delete`, `large_file_start`, `large_file_end`.
-
-NPC control commands: `get_npc`, `delete_npc`, `reset_npc`, `get_npc_script`, `warp_npc`, `get_npc_flags`, `set_npc_script`, `set_npc_flags`, `add_npc`, `class_edit`, `class_add`, `local_npcs_get`, `weapon_list_get`, `weapon_get`, `weapon_add`, `weapon_delete`, `class_delete`, `level_list_get`, `level_list_set`.
-
 ### Additional Senders
 
 `gc_send_language`, `gc_send_tamper_check`, `gc_send_enter_level_state`, `gc_send_baddy_props`, `gc_send_baddy_hurt`, `gc_send_baddy_add`, `gc_send_horse_add`, `gc_send_horse_del`, `gc_send_arrow_add`, `gc_send_shoot`, `gc_send_shoot2`, `gc_send_npc_server_query`, `gc_send_raw_data_header`, `gc_send_profile_get`, `gc_send_profile_set`, `gc_send_process_running`, `gc_send_process_list`, `gc_send_mute_player`, `gc_send_update_file`, and `gc_send_request_update_board` (64-bit modification time).
@@ -268,7 +260,7 @@ Senders that the protocol does not define return 0 and set the last error instea
 - `src/TClientProtocolV6.cpp` owns Gen6 headers, handshake login framing, compression decode, packet framing, RC4 receive decrypt, and bundle unpacking.
 - `src/TClientProtocolIO.cpp` owns shared G-type encoding helpers.
 - `src/TClientEvents.cpp` owns the extended packet decoders, typed callbacks, world-state cache, and large-file assembly.
-- `src/gclib_ext.cpp` owns the extra senders, remote-control and NPC-control command tables, list-server client, keepalive, and test hooks.
+- `src/gclib_ext.cpp` owns the extra senders, list-server client, keepalive, and test hooks.
 - `tests/gclib_tests.cpp` holds the native tests.
 
 ## Third-Party Code

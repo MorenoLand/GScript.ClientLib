@@ -259,8 +259,6 @@ GCLIB_API int gc_send_process_list(GCHandle handle, const char* comma_separated_
 GCLIB_API int gc_send_mute_player(GCHandle handle, int player_id);
 GCLIB_API int gc_send_request_update_board(GCHandle handle, const char* level, long long mod_time, int x, int y, int width, int height);
 
-GCLIB_API int gc_rc_send(GCHandle handle, const char* command, const char* const* args, int arg_count, const void* blob, int blob_length);
-GCLIB_API int gc_nc_send(GCHandle handle, const char* command, const char* const* args, int arg_count, const void* blob, int blob_length);
 
 GCLIB_API void gc_set_send_capture(GCHandle handle, GC_OnSendCapture callback, void* user_data);
 GCLIB_API int gc_inject_packet(GCHandle handle, int packet_id, const void* data, int length);
