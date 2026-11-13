@@ -16,3 +16,6 @@ settings.ini
 *.user
 *.suo
 .vs/
+
+.grc_mcp.json
+*.grc_mcp.json

@@ -7,6 +7,7 @@
 #include "IEnums.h"
 
 #include <algorithm>
+#include <chrono>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
@@ -18,7 +19,10 @@
 #include <unordered_set>
 #include <vector>
 
+extern "C" { static void tclient_reconnect_worker(TClient* gc); }
+
 namespace {
+
 static bool sockets_ready() {
 #ifdef _WIN32
     static bool initialized = false;
@@ -53,6 +57,17 @@ static bool send_all(socket_t s, const uint8_t* data, size_t len) {
 }
 
 static bool encode_send_packet(TClient* client, int packet_id, const uint8_t* data, int length) {
+    if (client) {
+        CallbackSendCapture capture;
+        {
+            std::lock_guard<std::mutex> lock(client->cb_mutex);
+            capture = client->send_capture;
+        }
+        if (capture.cb) {
+            capture.cb(packet_id, data, length < 0 ? 0 : length, capture.ud);
+            return true;
+        }
+    }
     if (!client || !client->connected || client->sock == invalid_socket_value) return false;
     if (!client->protocol || !client->protocol->build_packet_frame) return false;
     std::lock_guard<std::mutex> lock(client->send_mutex);
@@ -229,6 +244,13 @@ static void recv_loop(TClient* gc) {
         }
         if (cb.cb) cb.cb(gc->stop ? "Disconnected" : "Socket closed", cb.ud);
     }
+    if (!gc->shutting_down && gc->reconnect_max_attempts > 0 && !gc->list_mode) {
+        std::unique_lock<std::mutex> lock(gc->lifecycle_mutex, std::try_to_lock);
+        if (lock.owns_lock() && !gc->shutting_down) {
+            if (gc->reconnect_thread.joinable()) gc->reconnect_thread.join();
+            gc->reconnect_thread = std::thread(tclient_reconnect_worker, gc);
+        }
+    }
 }
 
 static TClient* as_client(GCHandle handle) {
@@ -319,9 +341,10 @@ GCLIB_API int gc_set_encryption_certificate_file(GCHandle handle, const char* pa
     return 1;
 }
 
-GCLIB_API int gc_connect(GCHandle handle) {
-    auto* gc = as_client(handle);
+static int connect_impl(TClient* gc, bool from_user) {
     if (!gc) return 0;
+    if (from_user) gc->shutting_down = false;
+    else if (gc->shutting_down) return 0;
     if (!gc->protocol) {
         set_error(gc, "Selected protocol generation is not implemented yet");
         return 0;
@@ -365,8 +388,8 @@ GCLIB_API int gc_connect(GCHandle handle) {
     gc->authenticated = false;
     gc->first_packet = true;
     gc->first_packet_out = true;
-    gc->in_iter = 0x04A80B38;
-    gc->out_iter = 0x04A80B38;
+    gc->in_iter = gc->cipher_seed;
+    gc->out_iter = gc->cipher_seed;
     gc->packet_index = 0;
     gc->v6_incoming_crypto_enabled = false;
     gc->v6_outgoing_crypto_enabled = false;
@@ -383,6 +406,7 @@ GCLIB_API int gc_connect(GCHandle handle) {
         return 0;
     }
     gc->recv_thread = std::thread(recv_loop, gc);
+    tclient_start_keepalive(gc);
 
     CallbackConnected cb;
     {
@@ -393,6 +417,45 @@ GCLIB_API int gc_connect(GCHandle handle) {
     return 1;
 }
 
+GCLIB_API int gc_connect(GCHandle handle) {
+    auto* gc = as_client(handle);
+    if (!gc) return 0;
+    std::lock_guard<std::mutex> lock(gc->lifecycle_mutex);
+    if (gc->recv_thread.joinable() && !gc->connected) gc->recv_thread.join();
+    return connect_impl(gc, true);
+}
+
+static void tclient_emit_state(TClient* gc, const char* state, int attempt, const char* reason) {
+    CallbackConnectionState cb;
+    {
+        std::lock_guard<std::mutex> lock(gc->cb_mutex);
+        cb = gc->on_connection_state;
+    }
+    if (cb.cb) cb.cb(state, attempt, reason ? reason : "", cb.ud);
+}
+
+static void tclient_reconnect_worker(TClient* gc) {
+    for (int attempt = 1; attempt <= gc->reconnect_max_attempts && !gc->shutting_down; ++attempt) {
+        tclient_emit_state(gc, "reconnecting", attempt, "");
+        for (int waited = 0; waited < gc->reconnect_delay_ms && !gc->shutting_down; waited += 50) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+        }
+        if (gc->shutting_down) return;
+        std::lock_guard<std::mutex> lock(gc->lifecycle_mutex);
+        if (gc->shutting_down) return;
+        if (gc->recv_thread.joinable()) gc->recv_thread.join();
+        gc->stop = false;
+        if (connect_impl(gc, false)) {
+            if (!gc->login_account.empty()) {
+                send_login_packet(gc, gc->login_account.c_str(), gc->login_password.c_str());
+            }
+            tclient_emit_state(gc, "reconnected", attempt, "");
+            return;
+        }
+    }
+    if (!gc->shutting_down) tclient_emit_state(gc, "reconnect_failed", gc->reconnect_max_attempts, gc->last_error.c_str());
+}
+
 GCLIB_API int gc_login(GCHandle handle, const char* account, const char* password) {
     auto* gc = as_client(handle);
     if (!gc || !gc->connected) return 0;
@@ -400,6 +463,9 @@ GCLIB_API int gc_login(GCHandle handle, const char* account, const char* passwor
         set_error(gc, "Selected protocol generation is not implemented yet");
         return 0;
     }
+    gc->login_account = account ? account : "";
+    gc->login_password = password ? password : "";
+    gc->last_login_error.clear();
     if (!send_login_packet(gc, account ? account : "", password ? password : "")) {
         set_error(gc, "Could not send login packet");
         return 0;
@@ -410,7 +476,10 @@ GCLIB_API int gc_login(GCHandle handle, const char* account, const char* passwor
 GCLIB_API void gc_disconnect(GCHandle handle) {
     auto* gc = as_client(handle);
     if (!gc) return;
+    gc->shutting_down = true;
     gc->stop = true;
+    {
+    std::lock_guard<std::mutex> lifecycle(gc->lifecycle_mutex);
     if (gc->sock != invalid_socket_value) {
 #ifdef _WIN32
         shutdown(gc->sock, SD_BOTH);
@@ -420,10 +489,13 @@ GCLIB_API void gc_disconnect(GCHandle handle) {
         close_socket(gc->sock);
         gc->sock = invalid_socket_value;
     }
-    if (gc->recv_thread.joinable()) gc->recv_thread.join();
+    if (gc->recv_thread.joinable() && gc->recv_thread.get_id() != std::this_thread::get_id()) gc->recv_thread.join();
     tclient_flush_pending_level_capture(gc, 0);
     gc->connected = false;
     gc->authenticated = false;
+    if (gc->keepalive_thread.joinable()) gc->keepalive_thread.join();
+    }
+    if (gc->reconnect_thread.joinable() && gc->reconnect_thread.get_id() != std::this_thread::get_id()) gc->reconnect_thread.join();
 }
 
 GCLIB_API int gc_is_connected(GCHandle handle) {
@@ -791,7 +863,7 @@ GCLIB_API int gc_send_hit_objects(GCHandle handle, float x, float y, int power, 
 
 GCLIB_API int gc_send_player_hurt(GCHandle handle, int target_player_id, float from_x, float from_y, float target_x, float target_y, int power) {
     std::vector<uint8_t> data;
-    write_gint3(data, target_player_id);
+    write_gshort(data, target_player_id);
     double dx = (target_x + 1.5 - from_x) * 0.5;
     double dy = (target_y + 2.0 - from_y) * 0.5;
     double len = std::hypot(dx, dy);
@@ -805,6 +877,7 @@ GCLIB_API int gc_send_player_hurt(GCHandle handle, int target_player_id, float f
     data.push_back(hurt_coord(dx));
     data.push_back(hurt_coord(dy));
     data.push_back(static_cast<uint8_t>(std::max(0, std::min(127, power)) + 32));
+    write_gint3(data, 0);
     return gc_send_packet(handle, PLI_HURTPLAYER, data.data(), static_cast<int>(data.size()));
 }
 
@@ -849,7 +922,7 @@ GCLIB_API int gc_send_item_take(GCHandle handle, float x, float y, int item_id) 
     int enc_y = std::max(0, std::min(127, static_cast<int>(std::floor(y * 2.0f + 0.5f))));
     data.push_back(static_cast<uint8_t>(enc_x + 32));
     data.push_back(static_cast<uint8_t>(enc_y + 32));
-    data.push_back(static_cast<uint8_t>((item_id & 0x7f) + 32));
+    (void)item_id;
     return gc_send_packet(handle, PLI_ITEMTAKE, data.data(), static_cast<int>(data.size()));
 }
 
@@ -905,9 +978,16 @@ GCLIB_API int gc_send_level_warp_modtime(GCHandle handle, float x, float y, cons
     return gc_send_packet(handle, PLI_LEVELWARPMOD, data.data(), static_cast<int>(data.size()));
 }
 
-GCLIB_API int gc_send_adjacent_level(GCHandle handle, const char* level) {
+GCLIB_API int gc_send_adjacent_level_modtime(GCHandle handle, const char* level, long long mod_time) {
+    std::vector<uint8_t> data;
+    write_gint5(data, static_cast<int>(mod_time));
     std::string s = level ? level : "";
-    return gc_send_packet(handle, PLI_ADJACENTLEVEL, s.data(), static_cast<int>(s.size()));
+    data.insert(data.end(), s.begin(), s.end());
+    return gc_send_packet(handle, PLI_ADJACENTLEVEL, data.data(), static_cast<int>(data.size()));
+}
+
+GCLIB_API int gc_send_adjacent_level(GCHandle handle, const char* level) {
+    return gc_send_adjacent_level_modtime(handle, level, 0);
 }
 
 GCLIB_API int gc_send_delete_npc(GCHandle handle, int npc_id) {
@@ -940,8 +1020,11 @@ GCLIB_API int gc_send_server_warp(GCHandle handle, const char* destination) {
 
 GCLIB_API int gc_send_board_modify(GCHandle handle, int layer, int x, int y, int width, int height, const unsigned short* tiles) {
     if (!tiles || width <= 0 || height <= 0) return 0;
+    if (layer > 0) {
+        set_error(as_client(handle), "The server only accepts board edits on the base layer");
+        return 0;
+    }
     std::vector<uint8_t> data;
-    if (layer > 0) data.push_back(static_cast<uint8_t>(layer + 0x60));
     data.push_back(static_cast<uint8_t>((x & 0xff) + 0x20));
     data.push_back(static_cast<uint8_t>((y & 0xff) + 0x20));
     data.push_back(static_cast<uint8_t>((width & 0xff) + 0x20));
@@ -965,8 +1048,16 @@ GCLIB_API int gc_send_carry_throw(GCHandle handle) {
 }
 
 GCLIB_API int gc_send_enter_level(GCHandle handle) {
-    uint8_t bang = '!';
-    return gc_send_packet(handle, PLI_UPDATEFILE, &bang, 1);
+    uint8_t state = 1 + 32;
+    return gc_send_packet(handle, 46, &state, 1);
+}
+
+GCLIB_API int gc_send_update_file(GCHandle handle, const char* filename, long long mod_time) {
+    std::vector<uint8_t> data;
+    write_gint5(data, static_cast<int>(mod_time));
+    std::string s = filename ? filename : "";
+    data.insert(data.end(), s.begin(), s.end());
+    return gc_send_packet(handle, PLI_UPDATEFILE, data.data(), static_cast<int>(data.size()));
 }
 
 GCLIB_API int gc_send_delete_weapon(GCHandle handle, const char* name) {
@@ -974,25 +1065,22 @@ GCLIB_API int gc_send_delete_weapon(GCHandle handle, const char* name) {
     return gc_send_packet(handle, PLI_NPCWEAPONDEL, s.data(), static_cast<int>(s.size()));
 }
 
-GCLIB_API int gc_send_explosion(GCHandle handle, float x, float y, int power, int bomb_index) {
-    // 4 bytes: x*2+0x20, y*2+0x20, bomb_index+0x20, power+0x20
+GCLIB_API int gc_send_explosion(GCHandle handle, float x, float y, int power, int radius) {
     std::vector<uint8_t> data;
     int enc_x = std::max(0, std::min(127, static_cast<int>(std::floor(x * 2.0f + 0.5f))));
     int enc_y = std::max(0, std::min(127, static_cast<int>(std::floor(y * 2.0f + 0.5f))));
+    data.push_back(static_cast<uint8_t>((radius & 0x7f) + 0x20));
     data.push_back(static_cast<uint8_t>(enc_x + 0x20));
     data.push_back(static_cast<uint8_t>(enc_y + 0x20));
-    data.push_back(static_cast<uint8_t>((bomb_index & 0x7f) + 0x20));
     data.push_back(static_cast<uint8_t>((power & 0x7f) + 0x20));
     return gc_send_packet(handle, PLI_EXPLOSION, data.data(), static_cast<int>(data.size()));
 }
 
 GCLIB_API int gc_send_have_window(GCHandle handle, int have, const char* name) {
-    // byte: (have ? '!' : ' ') then window name
-    std::vector<uint8_t> data;
-    data.push_back(static_cast<uint8_t>(have ? '!' : ' '));
-    std::string s = name ? name : "";
-    data.insert(data.end(), s.begin(), s.end());
-    return gc_send_packet(handle, PLI_WEAPONADD, data.data(), static_cast<int>(data.size()));
+    (void)have;
+    (void)name;
+    set_error(as_client(handle), "Window notifications are not part of the game protocol; use gc_send_window_list or gc_send_process_list");
+    return 0;
 }
 
 GCLIB_API int gc_send_ping_answer(GCHandle handle, int ping_value) {
@@ -1095,31 +1183,21 @@ GCLIB_API int gc_send_window_list(GCHandle handle, const char* window_list) {
 }
 
 GCLIB_API int gc_send_preload_level(GCHandle handle, const char* level, unsigned int mod_time) {
-    std::vector<uint8_t> data;
-    write_gint5(data, static_cast<int>(mod_time));
     std::string s = level ? level : "";
     std::transform(s.begin(), s.end(), s.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    data.insert(data.end(), s.begin(), s.end());
-    return gc_send_packet(handle, PLI_MUTEPLAYER, data.data(), static_cast<int>(data.size()));
+    return gc_send_adjacent_level_modtime(handle, s.c_str(), static_cast<long long>(mod_time));
 }
 
 GCLIB_API int gc_send_board_modify_rect(GCHandle handle, const char* level, int layer, int x, int y, int width, int height, const unsigned short* tiles) {
-    if (!tiles || width <= 0 || height <= 0) return 0;
-    std::vector<uint8_t> data;
-    write_length_string(data, level ? level : "");
-    if (layer > 0) data.push_back(static_cast<uint8_t>(layer + 0x60));
-    data.push_back(static_cast<uint8_t>((x & 0xff) + 0x20));
-    data.push_back(static_cast<uint8_t>((y & 0xff) + 0x20));
-    data.push_back(static_cast<uint8_t>((width & 0xff) + 0x20));
-    data.push_back(static_cast<uint8_t>((height & 0xff) + 0x20));
-    for (int row = 0; row < height; ++row) {
-        for (int col = 0; col < width; ++col) {
-            unsigned short t = tiles[static_cast<size_t>(row * width + col)];
-            data.push_back(static_cast<uint8_t>((t >> 7) + 0x20));
-            data.push_back(static_cast<uint8_t>((t & 0x7f) + 0x20));
-        }
-    }
-    return gc_send_packet(handle, 42, data.data(), static_cast<int>(data.size()));
+    (void)level;
+    (void)layer;
+    (void)x;
+    (void)y;
+    (void)width;
+    (void)height;
+    (void)tiles;
+    set_error(as_client(handle), "Level-addressed board edits are not part of the game protocol; warp to the level and use gc_send_board_modify");
+    return 0;
 }
 
 GCLIB_API int gc_send_shoot_projectile(GCHandle handle, double x, double y, double z, double angle, double z_angle, double power, double gravity, const char* gani, const char* gani_data, const char* options) {
@@ -1151,18 +1229,17 @@ GCLIB_API int gc_send_shoot_projectile(GCHandle handle, double x, double y, doub
 }
 
 GCLIB_API int gc_send_download_file(GCHandle handle, const char* url, const char* filename, const char* destination_path) {
-    (void)handle;
     (void)url;
     (void)filename;
     (void)destination_path;
-    return 1;
+    set_error(as_client(handle), "Downloading from a URL is not part of the game protocol; request the file with gc_request_file");
+    return 0;
 }
 
 GCLIB_API int gc_send_request_update_package(GCHandle handle, const char* package_name, int blocking) {
-    std::string s = package_name ? package_name : "";
     std::vector<uint8_t> data;
-    data.push_back(static_cast<uint8_t>(blocking ? 1 : 0));
-    data.insert(data.end(), s.begin(), s.end());
+    write_gstring(data, package_name ? package_name : "");
+    write_gchar(data, blocking ? 1 : 0);
     return gc_send_packet(handle, PLI_UPDATEPACKAGEREQUESTFILE, data.data(), static_cast<int>(data.size()));
 }
 

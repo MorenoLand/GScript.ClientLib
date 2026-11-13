@@ -2,6 +2,7 @@ import argparse
 import ctypes
 import json
 import math
+import os
 import pathlib
 import platform
 import sys
@@ -288,6 +289,7 @@ def make_parser(description, default_version):
     parser.add_argument("--dump-resource-types", default="", help="Comma-separated resource types to dump, such as level,level-board,file")
     parser.add_argument("--request-file", action="append", default=[], help="Request a server file; may be passed more than once")
     parser.add_argument("--request-level-board", nargs="?", const="", default=None, help="Request board data for this level, or current level when omitted")
+    parser.add_argument("--cipher-seed", default=os.environ.get("GCLIB_CIPHER_SEED", ""), help="Gen5 cipher seed as an integer (0x prefix allowed); the library carries no built-in seed")
     parser.add_argument("--seconds", default=15, type=int)
     parser.add_argument("--version", default=default_version)
     return parser
@@ -298,6 +300,9 @@ def run_basic_client(args, version):
     handle = gc.lib.gc_create_version(b(args.host), args.port, version)
     if not handle:
         raise RuntimeError("gc_create_version failed")
+    if getattr(args, "cipher_seed", ""):
+        gc.lib.gc_set_cipher_seed.argtypes = [c_void_p, ctypes.c_uint]
+        gc.lib.gc_set_cipher_seed(handle, int(args.cipher_seed, 0))
 
     if getattr(args, "dump_resources", ""):
         if not gc.lib.gc_set_resource_dump_directory(handle, b(args.dump_resources)):

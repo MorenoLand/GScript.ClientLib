@@ -6,6 +6,8 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 set(SOURCES
     src/gclib.cpp
+    src/gclib_ext.cpp
+    src/TClientEvents.cpp
     src/TClientPacketDispatch.cpp
     src/TClientProtocol.cpp
     src/TClientProtocolIO.cpp
@@ -74,3 +76,19 @@ set_target_properties(gclib PROPERTIES
 
 install(TARGETS gclib LIBRARY DESTINATION lib ARCHIVE DESTINATION lib RUNTIME DESTINATION bin)
 install(FILES ${HEADERS} DESTINATION include)
+
+option(GCLIB_BUILD_TESTS "Build the native test executable" ON)
+if(GCLIB_BUILD_TESTS)
+    enable_testing()
+    add_executable(gclib_tests tests/gclib_tests.cpp
+        deps/miniz/src/miniz.c deps/miniz/src/miniz_tdef.c deps/miniz/src/miniz_tinfl.c)
+    target_include_directories(gclib_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/deps/miniz/include)
+    target_link_libraries(gclib_tests PRIVATE gclib)
+    if(WIN32)
+        target_link_libraries(gclib_tests PRIVATE ws2_32)
+        add_custom_command(TARGET gclib_tests POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different $<TARGET_FILE:gclib> $<TARGET_FILE_DIR:gclib_tests>)
+    endif()
+    target_include_directories(gclib_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    add_test(NAME gclib_tests COMMAND gclib_tests)
+endif()

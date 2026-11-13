@@ -1,5 +1,3 @@
-# Third-Party Notices
-
 gclib bundles small third-party compression sources so the shared library can build without external package setup.
 
 ## miniz

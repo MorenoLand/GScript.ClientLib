@@ -357,7 +357,30 @@ static std::string json_raw_event(const std::vector<uint8_t>& payload, const cha
     return json.str();
 }
 
+static thread_local TClient* g_dispatch_client = nullptr;
+
+static bool is_remote_packet(int packet_id) {
+    return (packet_id >= PLO_RC_ACCOUNTADD && packet_id <= PLO_RC_PLAYERPROPSCHANGE) ||
+           (packet_id >= PLO_RC_SERVERFLAGSGET && packet_id <= PLO_RC_FILEBROWSER_MESSAGE) ||
+           (packet_id >= PLO_RC_ACCOUNTLISTGET && packet_id <= PLO_NC_CONTROL) ||
+           packet_id == PLO_NC_LEVELLIST ||
+           (packet_id >= PLO_NC_NPCATTRIBUTES && packet_id <= PLO_NC_LEVELDUMP) ||
+           packet_id == PLO_NC_WEAPONLISTGET || packet_id == PLO_NC_CLASSDELETE || packet_id == PLO_NC_WEAPONGET;
+}
+
+static void emit_remote_if_needed(int packet_id, const std::string& event_json) {
+    TClient* client = g_dispatch_client;
+    if (!client || !is_remote_packet(packet_id)) return;
+    CallbackRemoteEvent cb;
+    {
+        std::lock_guard<std::mutex> lock(client->cb_mutex);
+        cb = client->ext.remote_event;
+    }
+    if (cb.cb) cb.cb(packet_name(packet_id), event_json.c_str(), cb.ud);
+}
+
 static void emit_packet_event(const CallbackPacketEvent& cb, int packet_id, const std::string& event_json) {
+    emit_remote_if_needed(packet_id, event_json);
     if (!cb.cb) return;
     cb.cb(packet_id, packet_name(packet_id), event_json.c_str(), cb.ud);
 }
@@ -956,6 +979,8 @@ static std::string parse_props_json(const std::vector<uint8_t>& data, size_t sta
             value << "\"" << read_ip_address(r) << "\"";
         } else if (prop == TC_PLPROP_PCONNECTED) {
             value << "true";
+        } else if (prop == TC_PLPROP_UNKNOWN77 || prop == 83) {
+            value << r.gint5();
         } else if (prop == TC_PLPROP_UNKNOWN81) {
             value << (r.has() ? r.gchar() : 0);
         } else if (prop == TC_PLPROP_HORSEBUSHES || prop == TC_PLPROP_EFFECTCOLORS ||
@@ -963,7 +988,7 @@ static std::string parse_props_json(const std::vector<uint8_t>& data, size_t sta
                    prop == TC_PLPROP_KILLSCOUNT || prop == TC_PLPROP_DEATHSCOUNT ||
                    prop == TC_PLPROP_ONLINESECS || prop == TC_PLPROP_ALIGNMENT ||
                    prop == TC_PLPROP_ADDITFLAGS || prop == TC_PLPROP_JOINLEAVELVL ||
-                   prop == TC_PLPROP_UNKNOWN77 || prop == TC_PLPROP_MAXPOWER ||
+                   prop == TC_PLPROP_MAXPOWER ||
                    prop == TC_PLPROP_CURPOWER || prop == TC_PLPROP_ARROWSCOUNT ||
                    prop == TC_PLPROP_BOMBSCOUNT || prop == TC_PLPROP_GLOVEPOWER ||
                    prop == TC_PLPROP_BOMBPOWER || prop == TC_PLPROP_DIRECTION ||
@@ -1392,6 +1417,15 @@ static void split_flag(const std::string& raw, std::string& name, std::string& v
 
 } // namespace
 
+void tclient_emit_event(TClient* client, int packet_id, const std::string& event_json) {
+    CallbackPacketEvent cb;
+    {
+        std::lock_guard<std::mutex> lock(client->cb_mutex);
+        cb = client->on_packet_event;
+    }
+    if (cb.cb) cb.cb(packet_id, packet_name(packet_id), event_json.c_str(), cb.ud);
+}
+
 void tclient_flush_pending_level_capture(TClient* client, int packet_id) {
     if (!client) return;
     CallbackResource resource_cb;
@@ -1471,7 +1505,16 @@ void tclient_dispatch_packet(TClient* client, int packet_id, const std::vector<u
 
     if (raw_cb.cb) raw_cb.cb(packet_id, payload.data(), static_cast<int>(payload.size()), raw_cb.ud);
 
-    switch (packet_id) {
+    g_dispatch_client = client;
+    if (client->list_mode) {
+        tclient_dispatch_list_packet(client, packet_id, payload);
+        return;
+    }
+    const bool handled_extended = tclient_dispatch_extended(client, packet_id, payload);
+
+    switch (handled_extended ? -1 : packet_id) {
+    case -1:
+        break;
     case PLO_LEVELBOARD: {
         std::vector<unsigned short> tiles = parse_tiles(payload);
         if (payload.size() >= 8192) record_level_tiles(client, tiles);
@@ -1614,6 +1657,7 @@ void tclient_dispatch_packet(TClient* client, int packet_id, const std::vector<u
         } else {
             flush_level_capture(client, resource_cb, resource_dump_directory, resource_dump_types, packet_id);
             begin_level_capture(client, level);
+            tclient_world_reset_level(client);
         }
         if (level_cb.cb) level_cb.cb(level.c_str(), level_cb.ud);
         break;
@@ -1678,6 +1722,7 @@ void tclient_dispatch_packet(TClient* client, int packet_id, const std::vector<u
         std::string filename = r.gstring();
         std::vector<uint8_t> content = r.remaining();
         if (!content.empty() && content.back() == '\n') content.pop_back();
+        if (tclient_large_file_append(client, filename, mod_time, content)) break;
         emit_resource(resource_cb, resource_dump_directory, resource_dump_types, packet_id, is_level_resource_name(filename) ? "level" : "file", filename, content);
         if (file_cb.cb) file_cb.cb(filename.c_str(), content.data(), static_cast<int>(content.size()), mod_time, file_cb.ud);
         break;
@@ -1690,7 +1735,17 @@ void tclient_dispatch_packet(TClient* client, int packet_id, const std::vector<u
     }
     case PLO_NEWWORLDTIME: {
         int value = 0;
-        for (size_t i = 0; i < payload.size() && i < 4; ++i) value |= static_cast<int>(payload[i]) << (i * 8);
+        bool g4 = payload.size() >= 4;
+        for (size_t i = 0; i < 4 && g4; ++i) g4 = payload[i] >= 0x20 && payload[i] < 0xa0;
+        if (g4) {
+            for (size_t i = 0; i < 4; ++i) value = (value << 7) | (static_cast<int>(payload[i]) - 0x20);
+        } else {
+            for (size_t i = 0; i < payload.size() && i < 4; ++i) value |= static_cast<int>(payload[i]) << (i * 8);
+        }
+        {
+            std::lock_guard<std::mutex> lock(client->state_mutex);
+            client->world.world_time = value;
+        }
         if (time_cb.cb) time_cb.cb(value, time_cb.ud);
         break;
     }
@@ -1711,11 +1766,13 @@ void tclient_dispatch_packet(TClient* client, int packet_id, const std::vector<u
         std::string name;
         std::string value;
         split_flag(raw, name, value);
+        tclient_world_flag(client, name, value, true);
         if (flag_set_cb.cb) flag_set_cb.cb(name.c_str(), value.c_str(), flag_set_cb.ud);
         break;
     }
     case PLO_FLAGDEL: {
         std::string name = to_string_lossy(payload);
+        tclient_world_flag(client, name, "", false);
         if (flag_del_cb.cb) flag_del_cb.cb(name.c_str(), flag_del_cb.ud);
         break;
     }
@@ -1723,8 +1780,9 @@ void tclient_dispatch_packet(TClient* client, int packet_id, const std::vector<u
         if (payload.size() < 3) break;
         TPacketReader r(payload);
         int id = r.gint3();
-        std::string props = parse_props_json(payload, r.pos);
+        std::string props = tclient_npc_props_json(payload, r.pos);
         record_level_npc_props(client, payload);
+        tclient_world_npc(client, id, props, false);
         if (npc_cb.cb) npc_cb.cb(id, props.c_str(), npc_cb.ud);
         break;
     }
@@ -1732,6 +1790,7 @@ void tclient_dispatch_packet(TClient* client, int packet_id, const std::vector<u
         if (payload.size() < 3) break;
         TPacketReader r(payload);
         int id = r.gint3();
+        tclient_world_npc(client, id, "", true);
         if (npc_deleted_cb.cb) npc_deleted_cb.cb(id, npc_deleted_cb.ud);
         break;
     }
@@ -1749,6 +1808,7 @@ void tclient_dispatch_packet(TClient* client, int packet_id, const std::vector<u
         float x = static_cast<float>(r.gchar()) / 2.0f;
         float y = static_cast<float>(r.gchar()) / 2.0f;
         std::string text = to_string_lossy(r.remaining());
+        tclient_world_sign(client, x, y, text);
         if (sign_cb.cb) sign_cb.cb(x, y, text.c_str(), sign_cb.ud);
         break;
     }
@@ -1757,22 +1817,24 @@ void tclient_dispatch_packet(TClient* client, int packet_id, const std::vector<u
         break;
     }
     case PLO_EXPLOSION: {
-        if (payload.size() < 3) break;
+        if (payload.size() < 5) break;
         TPacketReader r(payload);
+        int explosion_player = r.gshort();
+        int radius = r.gchar();
         float x = static_cast<float>(r.gchar()) / 2.0f;
         float y = static_cast<float>(r.gchar()) / 2.0f;
-        int radius = r.gchar();
         int power = r.has() ? r.gchar() : 1;
+        (void)explosion_player;
         if (explosion_cb.cb) explosion_cb.cb(x, y, radius, power, explosion_cb.ud);
         break;
     }
     case PLO_HITOBJECTS: {
-        if (payload.size() < 3) break;
+        if (payload.size() < 5) break;
         TPacketReader r(payload);
+        int id = r.gshort();
+        int power = r.gchar();
         float x = static_cast<float>(r.gchar()) / 2.0f;
         float y = static_cast<float>(r.gchar()) / 2.0f;
-        int power = r.gchar();
-        int id = r.has(2) ? r.gshort() : 0;
         if (hit_cb.cb) hit_cb.cb(x, y, power, id, hit_cb.ud);
         break;
     }
@@ -1847,13 +1909,34 @@ void tclient_dispatch_packet(TClient* client, int packet_id, const std::vector<u
         if (weapon_script_cb.cb) {
             weapon_script_cb.cb(script_type.c_str(), script_name.c_str(), bytecode.data(), static_cast<int>(bytecode.size()), weapon_script_cb.ud);
         }
+        {
+            std::vector<std::string> parts;
+            size_t from = 0;
+            while (true) {
+                size_t c = header.find(',', from);
+                parts.push_back(header.substr(from, c == std::string::npos ? std::string::npos : c - from));
+                if (c == std::string::npos) break;
+                from = c + 1;
+            }
+            parts.resize(std::max<size_t>(parts.size(), 5));
+            std::ostringstream info;
+            info << "{\"target\":\"" << json_escape(parts[0]) << "\",\"name\":\"" << json_escape(parts[1])
+                 << "\",\"save_to_disk\":\"" << json_escape(parts[2]) << "\",\"key\":\"" << json_escape(parts[3])
+                 << "\",\"checksum\":\"" << json_escape(parts[4]) << "\",\"bytecode_length\":" << bytecode.size() << "}";
+            emit_packet_event(packet_event_cb, packet_id, info.str());
+        }
         break;
     }
     case PLO_NPCWEAPONADD: {
+        {
+            TPacketReader wr(payload);
+            tclient_world_weapon(client, wr.has() ? wr.gstring() : std::string(), true);
+        }
         emit_packet_event(packet_event_cb, packet_id, parse_npc_weapon_add_json(payload));
         break;
     }
     case PLO_NPCWEAPONDEL: {
+        tclient_world_weapon(client, to_string_lossy(payload), false);
         emit_packet_event(packet_event_cb, packet_id, json_string_field("name", to_string_lossy(payload)));
         break;
     }
@@ -1885,6 +1968,10 @@ void tclient_dispatch_packet(TClient* client, int packet_id, const std::vector<u
     case PLO_PROFILE:
     case PLO_NC_CONTROL:
     case PLO_NC_LEVELLIST:
+    case PLO_UNKNOWN60:
+    case PLO_UNKNOWN168:
+    case 108:
+    case 110:
     case PLO_UNKNOWN81:
     case PLO_UNKNOWN83:
     case PLO_UNKNOWN111:
@@ -2105,6 +2192,7 @@ void tclient_dispatch_packet(TClient* client, int packet_id, const std::vector<u
         (packet_id != PLO_NPCWEAPONADD || level_capture_has_npcs(client))) {
         flush_level_capture(client, resource_cb, resource_dump_directory, resource_dump_types, packet_id);
     }
+    tclient_publish_level_summary(client);
 }
 
 void tclient_process_decrypted(TClient* client, const std::vector<uint8_t>& decrypted) {

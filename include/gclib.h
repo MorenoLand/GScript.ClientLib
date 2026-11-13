@@ -53,6 +53,29 @@ typedef void (*GC_OnFlagDel)(const char* name, void* user_data);
 typedef void (*GC_OnWeaponScript)(const char* script_type, const char* script_name, const void* bytecode, int length, void* user_data);
 typedef void (*GC_OnResource)(const char* resource_type, const char* name, const void* data, int length, int packet_id, void* user_data);
 
+typedef void (*GC_OnHorse)(int added, float x, float y, int direction, int bushes, const char* image, void* user_data);
+typedef void (*GC_OnBaddyProps)(int baddy_id, const char* props_json, void* user_data);
+typedef void (*GC_OnBaddyHurt)(int baddy_id, int hurt_x, int hurt_y, int damage, void* user_data);
+typedef void (*GC_OnItem)(int added, float x, float y, int item_id, void* user_data);
+typedef void (*GC_OnBomb)(int added, int player_id, float x, float y, int power, int time_to_explode, void* user_data);
+typedef void (*GC_OnArrow)(int player_id, float x, float y, int flags, int sprite, int power, void* user_data);
+typedef void (*GC_OnChest)(int visible, int x, int y, int item_type, int sign_index, void* user_data);
+typedef void (*GC_OnLevelLink)(const char* destination_level, int x, int y, int width, int height, const char* new_x, const char* new_y, void* user_data);
+typedef void (*GC_OnTriggerAction)(int player_id, int npc_id, float x, float y, const char* action, const char* params, void* user_data);
+typedef void (*GC_OnSay2)(const char* text, void* user_data);
+typedef void (*GC_OnFreeze)(int frozen, void* user_data);
+typedef void (*GC_OnActiveLevel)(const char* level, void* user_data);
+typedef void (*GC_OnServerWarp)(const char* identifier, const char* name, const char* host, const char* port, void* user_data);
+typedef void (*GC_OnNetCookie)(const char* cookie, void* user_data);
+typedef void (*GC_OnServerOptions)(const char* options, void* user_data);
+typedef void (*GC_OnProcessQuery)(const char* kind, const char* data, void* user_data);
+typedef void (*GC_OnProfile)(const char* account, const char* fields_json, void* user_data);
+typedef void (*GC_OnRemoteEvent)(const char* kind, const char* event_json, void* user_data);
+typedef void (*GC_OnListServer)(const char* kind, const char* event_json, void* user_data);
+typedef void (*GC_OnTransfer)(const char* kind, const char* name, long long size, int complete, void* user_data);
+typedef void (*GC_OnSendCapture)(int packet_id, const void* data, int length, void* user_data);
+typedef void (*GC_OnConnectionState)(const char* state, int attempt, const char* reason, void* user_data);
+
 GCLIB_API GCHandle gc_create(const char* host, int port, const char* version);
 GCLIB_API GCHandle gc_create_version(const char* host, int port, GCVersion version);
 GCLIB_API void gc_destroy(GCHandle handle);
@@ -151,7 +174,8 @@ GCLIB_API int gc_send_fire_spy(GCHandle handle, int x, int y);
 GCLIB_API int gc_send_carry_throw(GCHandle handle);
 GCLIB_API int gc_send_enter_level(GCHandle handle);
 GCLIB_API int gc_send_delete_weapon(GCHandle handle, const char* name);
-GCLIB_API int gc_send_explosion(GCHandle handle, float x, float y, int power, int bomb_index);
+GCLIB_API int gc_send_explosion(GCHandle handle, float x, float y, int power, int radius);
+GCLIB_API int gc_send_update_file(GCHandle handle, const char* filename, long long mod_time);
 GCLIB_API int gc_send_have_window(GCHandle handle, int have, const char* name);
 GCLIB_API int gc_send_ping_answer(GCHandle handle, int ping_value);
 GCLIB_API int gc_send_is_pker(GCHandle handle, int player_id);
@@ -171,6 +195,71 @@ GCLIB_API int gc_send_shoot_projectile(GCHandle handle, double x, double y, doub
 GCLIB_API int gc_send_download_file(GCHandle handle, const char* url, const char* filename, const char* destination_path);
 GCLIB_API int gc_send_request_update_package(GCHandle handle, const char* package_name, int blocking);
 GCLIB_API int gc_set_encryption_out(GCHandle handle, const char* cipher_type, const char* key, const char* iv);
+
+
+GCLIB_API void gc_on_horse(GCHandle handle, GC_OnHorse callback, void* user_data);
+GCLIB_API void gc_on_baddy_props(GCHandle handle, GC_OnBaddyProps callback, void* user_data);
+GCLIB_API void gc_on_baddy_hurt(GCHandle handle, GC_OnBaddyHurt callback, void* user_data);
+GCLIB_API void gc_on_item(GCHandle handle, GC_OnItem callback, void* user_data);
+GCLIB_API void gc_on_bomb(GCHandle handle, GC_OnBomb callback, void* user_data);
+GCLIB_API void gc_on_arrow(GCHandle handle, GC_OnArrow callback, void* user_data);
+GCLIB_API void gc_on_chest(GCHandle handle, GC_OnChest callback, void* user_data);
+GCLIB_API void gc_on_level_link(GCHandle handle, GC_OnLevelLink callback, void* user_data);
+GCLIB_API void gc_on_trigger_action(GCHandle handle, GC_OnTriggerAction callback, void* user_data);
+GCLIB_API void gc_on_say2(GCHandle handle, GC_OnSay2 callback, void* user_data);
+GCLIB_API void gc_on_freeze(GCHandle handle, GC_OnFreeze callback, void* user_data);
+GCLIB_API void gc_on_active_level(GCHandle handle, GC_OnActiveLevel callback, void* user_data);
+GCLIB_API void gc_on_server_warp(GCHandle handle, GC_OnServerWarp callback, void* user_data);
+GCLIB_API void gc_on_net_cookie(GCHandle handle, GC_OnNetCookie callback, void* user_data);
+GCLIB_API void gc_on_server_options(GCHandle handle, GC_OnServerOptions callback, void* user_data);
+GCLIB_API void gc_on_process_query(GCHandle handle, GC_OnProcessQuery callback, void* user_data);
+GCLIB_API void gc_on_profile(GCHandle handle, GC_OnProfile callback, void* user_data);
+GCLIB_API void gc_on_remote_event(GCHandle handle, GC_OnRemoteEvent callback, void* user_data);
+GCLIB_API void gc_on_transfer(GCHandle handle, GC_OnTransfer callback, void* user_data);
+GCLIB_API void gc_on_connection_state(GCHandle handle, GC_OnConnectionState callback, void* user_data);
+
+GCLIB_API void gc_set_cipher_seed(GCHandle handle, unsigned int seed);
+GCLIB_API void gc_set_auto_process_replies(GCHandle handle, int enabled);
+GCLIB_API void gc_set_reconnect(GCHandle handle, int max_attempts, int delay_ms);
+GCLIB_API void gc_set_keepalive(GCHandle handle, int interval_ms);
+GCLIB_API char* gc_get_state_json(GCHandle handle, const char* kind);
+GCLIB_API const char* gc_get_last_login_error(GCHandle handle);
+
+GCLIB_API GCHandle gc_list_create(const char* host, int port, const char* version);
+GCLIB_API void gc_list_destroy(GCHandle handle);
+GCLIB_API void gc_list_on_event(GCHandle handle, GC_OnListServer callback, void* user_data);
+GCLIB_API int gc_list_connect(GCHandle handle);
+GCLIB_API int gc_list_request_servers(GCHandle handle, const char* account, const char* password);
+GCLIB_API char* gc_list_get_servers_json(GCHandle handle);
+
+GCLIB_API int gc_send_shoot(GCHandle handle, int source, int x, int y, int z, int angle, int z_angle, int speed, const char* gani, const char* parameters);
+GCLIB_API int gc_send_shoot2(GCHandle handle, int pixel_x, int pixel_y, int pixel_z, int offset_x, int offset_y, int angle, int z_angle, int power, int gravity, const char* gani, const char* parameters);
+GCLIB_API int gc_send_adjacent_level_modtime(GCHandle handle, const char* level, long long mod_time);
+GCLIB_API int gc_send_weapon_add(GCHandle handle, int weapon_type, int default_weapon_id, unsigned int npc_id);
+GCLIB_API int gc_send_language(GCHandle handle, const char* language);
+GCLIB_API int gc_send_tamper_check(GCHandle handle, long long hash1, long long hash2);
+GCLIB_API int gc_send_enter_level_state(GCHandle handle, int state);
+GCLIB_API int gc_send_baddy_props(GCHandle handle, int baddy_id, const void* props, int length);
+GCLIB_API int gc_send_baddy_hurt(GCHandle handle, int baddy_id, int hurt_x, int hurt_y, int damage);
+GCLIB_API int gc_send_baddy_add(GCHandle handle, float x, float y, int type, int power, const char* image);
+GCLIB_API int gc_send_horse_add(GCHandle handle, float x, float y, int direction, int bushes, const char* image);
+GCLIB_API int gc_send_horse_del(GCHandle handle, float x, float y);
+GCLIB_API int gc_send_arrow_add(GCHandle handle, float x, float y, int flags, int sprite, int power);
+GCLIB_API int gc_send_npc_server_query(GCHandle handle, int query_id, const char* message);
+GCLIB_API int gc_send_raw_data_header(GCHandle handle, int length);
+GCLIB_API int gc_send_profile_get(GCHandle handle, const char* account);
+GCLIB_API int gc_send_profile_set(GCHandle handle, const char* account, const char* name, const char* age, const char* sex, const char* country, const char* messenger, const char* email, const char* url, const char* hangout, const char* quote);
+GCLIB_API int gc_send_process_running(GCHandle handle, int running);
+GCLIB_API int gc_send_process_list(GCHandle handle, const char* comma_separated_names);
+GCLIB_API int gc_send_mute_player(GCHandle handle, int player_id);
+GCLIB_API int gc_send_request_update_board(GCHandle handle, const char* level, long long mod_time, int x, int y, int width, int height);
+
+GCLIB_API int gc_rc_send(GCHandle handle, const char* command, const char* const* args, int arg_count, const void* blob, int blob_length);
+GCLIB_API int gc_nc_send(GCHandle handle, const char* command, const char* const* args, int arg_count, const void* blob, int blob_length);
+
+GCLIB_API void gc_set_send_capture(GCHandle handle, GC_OnSendCapture callback, void* user_data);
+GCLIB_API int gc_inject_packet(GCHandle handle, int packet_id, const void* data, int length);
+GCLIB_API char* gc_decode_packet_json(int packet_id, const void* data, int length);
 
 GCLIB_API void gc_free_string(char* value);
 

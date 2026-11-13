@@ -126,6 +126,16 @@ static bool decompress_payload(int type, const std::vector<uint8_t>& input, std:
 TClientVersionConfig tclient_resolve_gen5_version(const char* version) {
     std::string v = version ? version : "6.037";
     if (v == "2.22" || v == "222") return {"2.22", "GNW03014", "356", 5, 5, true, "win", nullptr};
+    if (v == "6.113" || v == "6113") {
+#ifdef _WIN32
+        return {"6.113", "G3D2204D", nullptr, 5, 5, false, "win", nullptr};
+#elif defined(__APPLE__)
+        return {"6.113", "G3D2304D", nullptr, 5, 5, false, "mac", nullptr};
+#else
+        return {"6.113", "G3D2404D", nullptr, 5, 5, false, "linux", nullptr};
+#endif
+    }
+    if (v == "6.113_android" || v == "android") return {"6.113_android", "G3D2604D", nullptr, 5, 5, false, "android", nullptr};
     if (v == "6.037_linux" || v == "linux") return {"6.037_linux", "G3D0511C", nullptr, 5, 5, false, "linux", nullptr};
     if (v == "6.2" || v == "62" || v == "v6") return {"6.2", "G3D2504D", nullptr, 5, 6, false, "win", "GNP1905C"};
 #ifdef _WIN32
@@ -148,6 +158,7 @@ bool tclient_gen5_build_login_frame(TClient* client, const char* account, const 
     if (client->version.sends_build && client->version.build) write_gstring(raw, client->version.build);
     std::string info = tclient_default_client_info(*client);
     raw.insert(raw.end(), info.begin(), info.end());
+    raw.push_back(10);
 
     std::vector<uint8_t> compressed;
     if (!zlib_compress(raw, compressed)) return false;
@@ -194,7 +205,9 @@ bool tclient_gen5_build_packet_frame(TClient* client, int packet_id, const uint8
 
 bool tclient_gen5_decode_frame(TClient* client, const std::vector<uint8_t>& frame, std::vector<uint8_t>& decrypted_out) {
     if (frame.empty()) return false;
-    if (client->first_packet.exchange(false) || frame[0] == 0x78) {
+    const bool first = client->first_packet.exchange(false);
+    const bool comp_framed = frame[0] == COMP_UNCOMPRESSED || frame[0] == COMP_ZLIB || frame[0] == COMP_BZ2;
+    if ((first && !comp_framed) || frame[0] == 0x78) {
         return zlib_decompress(frame, decrypted_out);
     }
     int comp_type = frame[0];

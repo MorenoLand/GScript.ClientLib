@@ -1,5 +1,3 @@
-# GCLib
-
 `gclib` is a C ABI client-protocol library for building custom game clients, headless clients, tools, and protocol test harnesses. It owns the TCP connection, protocol-generation framing, login payloads, encryption/compression paths, packet send helpers, player-state cache, resource dumps, and common packet decoding so wrappers can stay thin.
 
 Python, C#, Rust, or any other client should call typed functions and callbacks instead of building or parsing raw protocol packets itself.
@@ -49,6 +47,7 @@ The sample config contains only placeholders. Real endpoint details, identity se
 
 ```c
 GCHandle gc = gc_create("127.0.0.1", 14900, "6.037");
+gc_set_cipher_seed(gc, seed_for_your_server);
 gc_set_client_identity(gc, "win", "", "", "", "");
 gc_connect(gc);
 gc_login(gc, "account", "password");
@@ -75,7 +74,7 @@ All strings are `char*` / `const char*` encoded as protocol-compatible single-by
 
 | API | Purpose |
 | --- | --- |
-| `gc_create` | Creates a client by version string such as `2.22`, `5.07`, `6.037`, or `6.2`. |
+| `gc_create` | Creates a client by version string such as `2.22`, `6.037`, `6.113`, or `6.2`. `6.113` selects the Windows, macOS, or Linux client string for the build platform; `android` selects the Android one. |
 | `gc_create_version` | Creates a client using the `GCVersion` enum. |
 | `gc_destroy` | Disconnects, joins the receive thread, and frees the handle. |
 | `gc_set_client_info` | Overrides the full login client-info string when a wrapper needs exact control. |
@@ -184,15 +183,75 @@ Level editing files are not arbitrary client downloads. Current-level `.nw` snap
 | `gc_unset_flag` | Deletes a client flag. |
 | `gc_send_packet` | Sends an explicitly supplied packet id and payload for diagnostics or unimplemented protocol experiments. |
 
+### Client Identity
+
+Servers check the client identifiers sent at login. Call `gc_set_client_identity` with the platform and four identifier strings before `gc_login`; a login with empty identifiers is rejected by servers that validate them. The login packet is newline-terminated, as servers expect.
+
+### Cipher Seed
+
+The library carries no cipher seed or key of its own. Gen5 sessions need the seed for the server you connect to: call `gc_set_cipher_seed` before `gc_connect`. The Python examples take `--cipher-seed` or the `GCLIB_CIPHER_SEED` environment variable. `gc_set_encryption_certificate_*` and `gc_set_encryption_out` likewise take their material from the caller.
+
+### World Callbacks
+
+| API | Fires for |
+| --- | --- |
+| `gc_on_horse` | Horse added or removed, with position, direction, bush count, and image. |
+| `gc_on_baddy_props`, `gc_on_baddy_hurt` | Baddy property updates and baddy damage. |
+| `gc_on_item`, `gc_on_bomb`, `gc_on_arrow`, `gc_on_chest` | Items, bombs, arrows, and level chests. |
+| `gc_on_level_link` | Each level link with destination, rectangle, and target position. |
+| `gc_on_trigger_action` | Trigger actions with player id, NPC id, position, action, and parameters. |
+| `gc_on_say2`, `gc_on_freeze`, `gc_on_active_level` | Say2 text, freeze/unfreeze, and active-level changes. |
+| `gc_on_server_warp` | Server warp with identifier, name, host, and port. |
+| `gc_on_net_cookie`, `gc_on_server_options` | Net cookie and server options text. |
+| `gc_on_process_query` | Process-running, process-list, and screenshot requests. The library answers the first two with an empty result unless `gc_set_auto_process_replies(handle, 0)`. |
+| `gc_on_profile` | Profile replies. |
+| `gc_on_remote_event` | Every remote-control and NPC-control reply with a stable kind name and decoded JSON. |
+| `gc_on_transfer` | Large-file and update-package progress. Large files are assembled from their chunks and delivered once through `gc_on_file`. |
+| `gc_on_connection_state` | `reconnecting`, `reconnected`, and `reconnect_failed`. |
+
+### World State
+
+`gc_get_state_json(handle, kind)` returns a JSON copy of cached state. Kinds: `players`, `level`, `npcs`, `flags`, `weapons`, `horses`, `baddies`, `items`, `bombs`, `chests`, `signs`, `links`, and `session` (active level, freeze, leader, world time, net cookie, server options, update package). Level-scoped kinds reset when a new level begins.
+
+### Remote Control And NPC Control Commands
+
+`gc_rc_send(handle, command, args, arg_count, blob, blob_length)` and `gc_nc_send` build the packet for a named command from string arguments, so wrappers never assemble these payloads. Unknown commands return 0 and set the last error.
+
+Remote control commands: `get_server_options`, `set_server_options`, `get_folder_config`, `set_folder_config`, `set_respawn`, `set_horse_life`, `set_ap_increment`, `set_baddy_respawn`, `get_player_props`, `set_player_props`, `disconnect_player`, `update_levels`, `admin_message`, `private_admin_message`, `list_rcs`, `disconnect_rc`, `apply_reason`, `get_server_flags`, `set_server_flags`, `account_add`, `account_del`, `get_account_list`, `get_player_props_by_id`, `get_player_props_by_account`, `reset_player_props`, `set_player_props_by_account`, `get_account`, `set_account`, `chat`, `warp_player`, `get_rights`, `set_rights`, `get_comments`, `set_comments`, `get_ban`, `set_ban`, `file_browser_start`, `file_browser_cd`, `file_browser_end`, `file_browser_download`, `file_browser_upload`, `file_browser_move`, `file_browser_delete`, `file_browser_rename`, `folder_delete`, `large_file_start`, `large_file_end`.
+
+NPC control commands: `get_npc`, `delete_npc`, `reset_npc`, `get_npc_script`, `warp_npc`, `get_npc_flags`, `set_npc_script`, `set_npc_flags`, `add_npc`, `class_edit`, `class_add`, `local_npcs_get`, `weapon_list_get`, `weapon_get`, `weapon_add`, `weapon_delete`, `class_delete`, `level_list_get`, `level_list_set`.
+
+### Additional Senders
+
+`gc_send_language`, `gc_send_tamper_check`, `gc_send_enter_level_state`, `gc_send_baddy_props`, `gc_send_baddy_hurt`, `gc_send_baddy_add`, `gc_send_horse_add`, `gc_send_horse_del`, `gc_send_arrow_add`, `gc_send_shoot`, `gc_send_shoot2`, `gc_send_npc_server_query`, `gc_send_raw_data_header`, `gc_send_profile_get`, `gc_send_profile_set`, `gc_send_process_running`, `gc_send_process_list`, `gc_send_mute_player`, `gc_send_update_file`, and `gc_send_request_update_board` (64-bit modification time).
+
+### Connection Management
+
+| API | Purpose |
+| --- | --- |
+| `gc_set_reconnect` | Reconnects and logs in again after an unexpected disconnect, with an attempt limit and delay. |
+| `gc_set_keepalive` | Sends a periodic packet-count packet while authenticated. |
+| `gc_get_last_login_error` | Text of the last login failure sent by the server. |
+| `gc_list_create`, `gc_list_connect`, `gc_list_request_servers`, `gc_list_on_event`, `gc_list_get_servers_json`, `gc_list_destroy` | Connect to a list server, log in, and read the server list, status text, URLs, and errors. |
+
+### Testing Hooks
+
+`gc_set_send_capture` diverts every outgoing packet to a callback instead of the socket, `gc_inject_packet` feeds a packet through the dispatcher as if the server sent it, and `gc_decode_packet_json` decodes one payload without a handle. The native tests in `tests/` use them and run with `ctest`. They also run full loopback sessions against a scripted server that implements the Gen5 framing independently: login, encrypted packets in both directions, the list-server exchange, and reconnect.
+
+### Packet Coverage
+
+Every server-to-client packet id is routed to a handler; the coverage test fails if any id reaches the `unhandled` fallback. Decoded with named fields: player, NPC, level, board, file, flag, weapon, horse, baddy, item, bomb, arrow, chest, link, trigger, shoot, say2, message, profile, remote-control, NPC-control, transfer, update-package, process, and session packets. Delivered as raw hex because the protocol defines no structure and the reference client ignores them too: ids 60, 81, 83, 104, 108, 110, 124, 132, 133, 168, 169, 181, and 193. Player property 125 is never sent by the server.
+
+Senders that the protocol does not define return 0 and set the last error instead of sending something the server would reject: `gc_send_have_window`, `gc_send_board_modify_rect`, `gc_send_download_file`, and `gc_send_board_modify` with a layer above 0. `gc_send_preload_level` and `gc_send_adjacent_level` send the adjacent-level packet (modification time plus level name); `gc_send_weapon_add` sends the weapon-add packet.
+
 ### Packet Event JSON
 
 `gc_on_packet_event` uses stable enum names from `IEnums.h`. Richer packet families emit named JSON fields. Remaining diagnostic categories include:
 
 | Category | Meaning |
 | --- | --- |
-| `world-object` | Horse, baddy, NPC action, or similar world-object payload not yet promoted to a dedicated callback. |
+| `npc-action` | NPC action payload, delivered as hex and text. |
 | `trigger-action` | Raw trigger-action payload. |
-| `motion-or-action` | Movement, shooting, process list, or update action payloads that still need deeper protocol-specific decoding. |
 | `ui` | UI/window payloads. |
 | `unknown` | Known enum slot with unknown structure. |
 | `unhandled` | Fallback for packet ids without a richer handler. |
@@ -207,6 +266,9 @@ Level editing files are not arbitrary client downloads. Current-level `.nw` snap
 - `src/TClientProtocolV5.cpp` owns Gen5 frame compression, encryption, login framing, and packet framing.
 - `src/TClientProtocolV6.cpp` owns Gen6 headers, handshake login framing, compression decode, packet framing, RC4 receive decrypt, and bundle unpacking.
 - `src/TClientProtocolIO.cpp` owns shared G-type encoding helpers.
+- `src/TClientEvents.cpp` owns the extended packet decoders, typed callbacks, world-state cache, and large-file assembly.
+- `src/gclib_ext.cpp` owns the extra senders, remote-control and NPC-control command tables, list-server client, keepalive, and test hooks.
+- `tests/gclib_tests.cpp` holds the native tests.
 
 ## Third-Party Code
 
