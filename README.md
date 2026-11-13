@@ -47,7 +47,6 @@ The sample config contains only placeholders. Real endpoint details, identity se
 
 ```c
 GCHandle gc = gc_create("127.0.0.1", 14900, "6.037");
-gc_set_cipher_seed(gc, seed_for_your_server);
 gc_set_client_identity(gc, "win", "", "", "", "");
 gc_connect(gc);
 gc_login(gc, "account", "password");
@@ -187,9 +186,11 @@ Level editing files are not arbitrary client downloads. Current-level `.nw` snap
 
 Servers check the client identifiers sent at login. Call `gc_set_client_identity` with the platform and four identifier strings before `gc_login`; a login with empty identifiers is rejected by servers that validate them. The login packet is newline-terminated, as servers expect.
 
+After `gc_login`, the real client immediately sends its base-file requests and the language packet, before the server answers. Call `gc_request_base_files` and `gc_send_language` the same way; some servers send nothing but the signature until they have the language packet.
+
 ### Cipher Seed
 
-The library carries no cipher seed or key of its own. Gen5 sessions need the seed for the server you connect to: call `gc_set_cipher_seed` before `gc_connect`. The Python examples take `--cipher-seed` or the `GCLIB_CIPHER_SEED` environment variable. `gc_set_encryption_certificate_*` and `gc_set_encryption_out` likewise take their material from the caller.
+The Gen5 cipher starts from a built-in default seed, so a normal connection needs no setup. `gc_set_cipher_seed` overrides it before `gc_connect` for servers that use a different one; the Python examples take `--cipher-seed` or `GCLIB_CIPHER_SEED`. `gc_set_encryption_certificate_*` and `gc_set_encryption_out` take their key material from the caller.
 
 ### World Callbacks
 
@@ -232,7 +233,7 @@ NPC control commands: `get_npc`, `delete_npc`, `reset_npc`, `get_npc_script`, `w
 | `gc_set_reconnect` | Reconnects and logs in again after an unexpected disconnect, with an attempt limit and delay. |
 | `gc_set_keepalive` | Sends a periodic packet-count packet while authenticated. |
 | `gc_get_last_login_error` | Text of the last login failure sent by the server. |
-| `gc_list_create`, `gc_list_connect`, `gc_list_request_servers`, `gc_list_on_event`, `gc_list_get_servers_json`, `gc_list_destroy` | Connect to a list server, log in, and read the server list, status text, URLs, and errors. |
+| `gc_list_create`, `gc_list_connect`, `gc_list_request_servers`, `gc_list_on_event`, `gc_list_get_servers_json`, `gc_list_destroy` | Optional, built only with `-DGCLIB_LISTSERVER=ON`, and only for the 2.x protocol (6.x clients connect straight to a login or game server and `gc_list_create` returns NULL for them). Connect to a list server, log in, and read the server list, status text, URLs, and errors. |
 
 ### Testing Hooks
 

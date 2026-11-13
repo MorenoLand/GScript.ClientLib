@@ -39,6 +39,10 @@ set(HEADERS
 )
 
 add_library(gclib SHARED ${SOURCES} ${HEADERS})
+option(GCLIB_LISTSERVER "Build the optional list-server client used by the pre-6 (2.x) protocol" OFF)
+if(GCLIB_LISTSERVER)
+    target_compile_definitions(gclib PUBLIC GCLIB_LISTSERVER=1)
+endif()
 target_include_directories(gclib
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include

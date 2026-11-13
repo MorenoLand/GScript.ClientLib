@@ -393,6 +393,7 @@ void test_dispatch_and_state() {
     gc_destroy(gc);
 }
 
+#ifdef GCLIB_LISTSERVER
 struct ListLog {
     std::vector<std::string> kinds;
     std::string servers;
@@ -405,7 +406,7 @@ void on_list(const char* kind, const char* json, void* ud) {
 }
 
 void test_list_server() {
-    GCHandle gc = gc_list_create("127.0.0.1", 1, "6.037");
+    GCHandle gc = gc_list_create("127.0.0.1", 1, "2.22");
     ListLog log;
     gc_list_on_event(gc, on_list, &log);
     auto entry = [](Builder& b, const char* name, const char* host, const char* port) {
@@ -425,6 +426,8 @@ void test_list_server() {
     CHECK(log.kinds.back() == "error");
     gc_list_destroy(gc);
 }
+
+#endif
 
 // -- reconnect ---------------------------------------------------------------
 
@@ -726,6 +729,7 @@ void test_session() {
     close_test_socket(listener);
 }
 
+#ifdef GCLIB_LISTSERVER
 void test_list_session() {
     const uint32_t seed = 0x2A3B4C5Du;
     int port = 0;
@@ -766,7 +770,7 @@ void test_list_session() {
         close_test_socket(s);
     });
 
-    GCHandle gc = gc_list_create("127.0.0.1", port, "6.037");
+    GCHandle gc = gc_list_create("127.0.0.1", port, "2.22");
     gc_set_cipher_seed(gc, seed);
     ListLog log;
     gc_list_on_event(gc, on_list, &log);
@@ -778,11 +782,13 @@ void test_list_session() {
     gc_list_destroy(gc);
     server.join();
     CHECK(hello_id == 7);
-    CHECK(std::string(hello_body.begin(), hello_body.end()) == "G3D0311Cnewmain");
+    CHECK(std::string(hello_body.begin(), hello_body.end()) == "GNW03014newmain");
     CHECK(request_id == 1);
     CHECK(request_body == Builder().str("acct").str("pass").v);
     close_test_socket(listener);
 }
+
+#endif
 
 } // namespace
 
@@ -792,10 +798,14 @@ int main() {
     test_senders();
     test_decoders();
     test_dispatch_and_state();
+#ifdef GCLIB_LISTSERVER
     test_list_server();
+#endif
     test_reconnect();
     test_session();
+#ifdef GCLIB_LISTSERVER
     test_list_session();
+#endif
     std::printf("%d checks, %d failures\n", g_checks, g_failures);
     return g_failures == 0 ? 0 : 1;
 }

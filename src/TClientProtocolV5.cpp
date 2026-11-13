@@ -135,6 +135,7 @@ TClientVersionConfig tclient_resolve_gen5_version(const char* version) {
         return {"6.113", "G3D2404D", nullptr, 5, 5, false, "linux", nullptr};
 #endif
     }
+    if (v == "6.113_other" || v == "other") return {"6.113_other", "G3D2504D", nullptr, 5, 5, false, "mac", nullptr};
     if (v == "6.113_android" || v == "android") return {"6.113_android", "G3D2604D", nullptr, 5, 5, false, "android", nullptr};
     if (v == "6.037_linux" || v == "linux") return {"6.037_linux", "G3D0511C", nullptr, 5, 5, false, "linux", nullptr};
     if (v == "6.2" || v == "62" || v == "v6") return {"6.2", "G3D2504D", nullptr, 5, 6, false, "win", "GNP1905C"};

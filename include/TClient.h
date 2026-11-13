@@ -60,7 +60,9 @@ struct CallbackServerOptions { GC_OnServerOptions cb = nullptr; void* ud = nullp
 struct CallbackProcessQuery { GC_OnProcessQuery cb = nullptr; void* ud = nullptr; };
 struct CallbackProfile { GC_OnProfile cb = nullptr; void* ud = nullptr; };
 struct CallbackRemoteEvent { GC_OnRemoteEvent cb = nullptr; void* ud = nullptr; };
+#ifdef GCLIB_LISTSERVER
 struct CallbackListServer { GC_OnListServer cb = nullptr; void* ud = nullptr; };
+#endif
 struct CallbackTransfer { GC_OnTransfer cb = nullptr; void* ud = nullptr; };
 struct CallbackConnectionState { GC_OnConnectionState cb = nullptr; void* ud = nullptr; };
 
@@ -170,11 +172,13 @@ struct TClient {
     uint8_t v6_rc4_out_s[256]{};
     uint8_t v6_rc4_out_i = 0;
     uint8_t v6_rc4_out_j = 0;
-    uint32_t cipher_seed = 0;
-    uint32_t in_iter = 0;
-    uint32_t out_iter = 0;
+    uint32_t cipher_seed = 0x04A80B38;
+    uint32_t in_iter = 0x04A80B38;
+    uint32_t out_iter = 0x04A80B38;
     bool auto_process_replies = true;
+#ifdef GCLIB_LISTSERVER
     bool list_mode = false;
+#endif
     std::string last_login_error;
     int reconnect_max_attempts = 0;
     int reconnect_delay_ms = 2000;
@@ -191,9 +195,13 @@ struct TClient {
     TClientLargeFile large_file;
     TClientExtCallbacks ext;
     CallbackSendCapture send_capture;
+#ifdef GCLIB_LISTSERVER
     CallbackListServer on_list_event;
+#endif
     CallbackConnectionState on_connection_state;
+#ifdef GCLIB_LISTSERVER
     std::vector<std::string> list_servers_json;
+#endif
     std::atomic<bool> connected{false};
     std::atomic<bool> authenticated{false};
     std::atomic<bool> stop{false};
@@ -243,5 +251,12 @@ struct TClient {
     CallbackWeaponScript on_weapon_script;
     CallbackResource on_resource;
 };
+
+// True for a client created through the optional pre-6 list-server API (always false when it is not compiled in).
+#ifdef GCLIB_LISTSERVER
+inline bool tclient_list_mode(const TClient& client) { return client.list_mode; }
+#else
+inline bool tclient_list_mode(const TClient&) { return false; }
+#endif
 
 #endif

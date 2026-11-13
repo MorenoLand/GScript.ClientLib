@@ -21,7 +21,9 @@ void tclient_world_weapon(TClient* client, const std::string& name, bool add);
 void tclient_world_sign(TClient* client, double x, double y, const std::string& text);
 void tclient_world_clear_weapons(TClient* client);
 std::string tclient_world_json(TClient* client, const std::string& kind);
+#ifdef GCLIB_LISTSERVER
 bool tclient_dispatch_list_packet(TClient* client, int packet_id, const std::vector<uint8_t>& payload);
+#endif
 std::string tclient_npc_props_json(const std::vector<uint8_t>& payload, size_t start);
 void tclient_publish_level_summary(TClient* client);
 void tclient_start_keepalive(TClient* client);

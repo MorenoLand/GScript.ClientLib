@@ -1506,10 +1506,12 @@ void tclient_dispatch_packet(TClient* client, int packet_id, const std::vector<u
     if (raw_cb.cb) raw_cb.cb(packet_id, payload.data(), static_cast<int>(payload.size()), raw_cb.ud);
 
     g_dispatch_client = client;
+#ifdef GCLIB_LISTSERVER
     if (client->list_mode) {
         tclient_dispatch_list_packet(client, packet_id, payload);
         return;
     }
+#endif
     const bool handled_extended = tclient_dispatch_extended(client, packet_id, payload);
 
     switch (handled_extended ? -1 : packet_id) {
@@ -1554,6 +1556,7 @@ void tclient_dispatch_packet(TClient* client, int packet_id, const std::vector<u
         break;
     }
     case PLO_DISCMESSAGE: {
+        client->last_login_error = to_string_lossy(payload);
         flush_level_capture(client, resource_cb, resource_dump_directory, resource_dump_types, packet_id);
         std::string reason = to_string_lossy(payload);
         client->connected = false;

@@ -202,6 +202,7 @@ int send_command(GCHandle handle, const CommandSpec* table, size_t table_size, c
     return 0;
 }
 
+#ifdef GCLIB_LISTSERVER
 std::string read_entry(TPacketReader& r) {
     if (!r.has()) return "{}";
     r.gchar();
@@ -217,6 +218,8 @@ std::string read_entry(TPacketReader& r) {
            ",\"url\":" + json_text(url) + ",\"version\":" + json_text(version) + ",\"players\":" + json_text(players) +
            ",\"host\":" + json_text(host) + ",\"port\":" + json_text(port) + "}";
 }
+
+#endif
 
 void keepalive_loop(TClient* gc) {
     int counter = 0;
@@ -241,6 +244,7 @@ void tclient_start_keepalive(TClient* gc) {
     gc->keepalive_thread = std::thread(keepalive_loop, gc);
 }
 
+#ifdef GCLIB_LISTSERVER
 bool tclient_dispatch_list_packet(TClient* client, int packet_id, const std::vector<uint8_t>& payload) {
     TPacketReader r(payload);
     std::string kind;
@@ -272,6 +276,13 @@ bool tclient_dispatch_list_packet(TClient* client, int packet_id, const std::vec
         json = json_text(text);
         break;
     }
+    case 16: {
+        kind = "disconnect_message";
+        std::string text(payload.begin(), payload.end());
+        client->last_login_error = text;
+        json = json_text(text);
+        break;
+    }
     case 5: kind = "donate_url"; json = json_text(std::string(payload.begin(), payload.end())); break;
     case 6: kind = "call_us"; json = json_text(std::string(payload.begin(), payload.end())); break;
     default:
@@ -286,6 +297,8 @@ bool tclient_dispatch_list_packet(TClient* client, int packet_id, const std::vec
     if (cb.cb) cb.cb(kind.c_str(), wrapped.c_str(), cb.ud);
     return true;
 }
+
+#endif
 
 extern "C" {
 
@@ -428,6 +441,15 @@ GCLIB_API int gc_send_weapon_add(GCHandle handle, int weapon_type, int default_w
         for (int shift = 21; shift >= 0; shift -= 7) data.push_back(static_cast<uint8_t>(((npc_id >> shift) & 0x7f) + 32));
     }
     return gc_send_packet(handle, PLI_WEAPONADD, data.data(), static_cast<int>(data.size()));
+}
+
+GCLIB_API int gc_request_base_files(GCHandle handle, const char* const* files, int count) {
+    // The client asks for at most the first ten wanted files at login.
+    int sent = 0;
+    for (int n = 0; n < count && n < 10 && files; ++n) {
+        if (files[n] && *files[n] && gc_request_file(handle, files[n])) ++sent;
+    }
+    return sent;
 }
 
 GCLIB_API int gc_send_language(GCHandle handle, const char* language) {
@@ -593,8 +615,12 @@ GCLIB_API int gc_nc_send(GCHandle handle, const char* command, const char* const
     return send_command(handle, kNpcCommands, sizeof(kNpcCommands) / sizeof(kNpcCommands[0]), command, args, arg_count, blob, blob_length);
 }
 
+#ifdef GCLIB_LISTSERVER
 GCLIB_API GCHandle gc_list_create(const char* host, int port, const char* version) {
-    GCHandle handle = gc_create(host, port, version ? version : "6.037");
+    // Only the 2.x protocol logs in through a list server; 6.x clients connect straight to a login or game server.
+    std::string wanted = version ? version : "2.22";
+    if (wanted != "2.22" && wanted != "222") return nullptr;
+    GCHandle handle = gc_create(host, port, wanted.c_str());
     auto* gc = as_client(handle);
     if (gc) gc->list_mode = true;
     return handle;
@@ -661,5 +687,7 @@ GCLIB_API char* gc_list_get_servers_json(GCHandle handle) {
     }
     return copy_for_abi(out + "]");
 }
+
+#endif
 
 } // extern "C"

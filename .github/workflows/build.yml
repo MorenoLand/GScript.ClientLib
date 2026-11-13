@@ -82,6 +82,12 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
+      - name: Build and test with the optional list-server client
+        run: |
+          cmake -S . -B build-listserver -DCMAKE_BUILD_TYPE=Release -DGCLIB_LISTSERVER=ON
+          cmake --build build-listserver --parallel
+          ctest --test-dir build-listserver --output-on-failure
+
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:

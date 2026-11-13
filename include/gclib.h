@@ -71,7 +71,9 @@ typedef void (*GC_OnServerOptions)(const char* options, void* user_data);
 typedef void (*GC_OnProcessQuery)(const char* kind, const char* data, void* user_data);
 typedef void (*GC_OnProfile)(const char* account, const char* fields_json, void* user_data);
 typedef void (*GC_OnRemoteEvent)(const char* kind, const char* event_json, void* user_data);
+#ifdef GCLIB_LISTSERVER
 typedef void (*GC_OnListServer)(const char* kind, const char* event_json, void* user_data);
+#endif
 typedef void (*GC_OnTransfer)(const char* kind, const char* name, long long size, int complete, void* user_data);
 typedef void (*GC_OnSendCapture)(int packet_id, const void* data, int length, void* user_data);
 typedef void (*GC_OnConnectionState)(const char* state, int attempt, const char* reason, void* user_data);
@@ -225,17 +227,20 @@ GCLIB_API void gc_set_keepalive(GCHandle handle, int interval_ms);
 GCLIB_API char* gc_get_state_json(GCHandle handle, const char* kind);
 GCLIB_API const char* gc_get_last_login_error(GCHandle handle);
 
+#ifdef GCLIB_LISTSERVER
 GCLIB_API GCHandle gc_list_create(const char* host, int port, const char* version);
 GCLIB_API void gc_list_destroy(GCHandle handle);
 GCLIB_API void gc_list_on_event(GCHandle handle, GC_OnListServer callback, void* user_data);
 GCLIB_API int gc_list_connect(GCHandle handle);
 GCLIB_API int gc_list_request_servers(GCHandle handle, const char* account, const char* password);
 GCLIB_API char* gc_list_get_servers_json(GCHandle handle);
+#endif
 
 GCLIB_API int gc_send_shoot(GCHandle handle, int source, int x, int y, int z, int angle, int z_angle, int speed, const char* gani, const char* parameters);
 GCLIB_API int gc_send_shoot2(GCHandle handle, int pixel_x, int pixel_y, int pixel_z, int offset_x, int offset_y, int angle, int z_angle, int power, int gravity, const char* gani, const char* parameters);
 GCLIB_API int gc_send_adjacent_level_modtime(GCHandle handle, const char* level, long long mod_time);
 GCLIB_API int gc_send_weapon_add(GCHandle handle, int weapon_type, int default_weapon_id, unsigned int npc_id);
+GCLIB_API int gc_request_base_files(GCHandle handle, const char* const* files, int count);
 GCLIB_API int gc_send_language(GCHandle handle, const char* language);
 GCLIB_API int gc_send_tamper_check(GCHandle handle, long long hash1, long long hash2);
 GCLIB_API int gc_send_enter_level_state(GCHandle handle, int state);

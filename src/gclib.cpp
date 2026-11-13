@@ -244,7 +244,7 @@ static void recv_loop(TClient* gc) {
         }
         if (cb.cb) cb.cb(gc->stop ? "Disconnected" : "Socket closed", cb.ud);
     }
-    if (!gc->shutting_down && gc->reconnect_max_attempts > 0 && !gc->list_mode) {
+    if (!gc->shutting_down && gc->reconnect_max_attempts > 0 && !tclient_list_mode(*gc)) {
         std::unique_lock<std::mutex> lock(gc->lifecycle_mutex, std::try_to_lock);
         if (lock.owns_lock() && !gc->shutting_down) {
             if (gc->reconnect_thread.joinable()) gc->reconnect_thread.join();
