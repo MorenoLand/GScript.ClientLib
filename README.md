@@ -43,6 +43,12 @@ python examples/python/connect_from_headless_config.py --settings settings.ini -
 
 The sample config contains only placeholders. Real endpoint details, identity seeds, and private key material should live in an ignored `settings.ini`, a `*.local.ini`, environment variables, or your wrapper's own config system.
 
+## MCP Server Example
+
+`examples/gc_mcp.py` is a Model Context Protocol server (stdio, Python only) over gclib. It logs in as a client, then chats, moves, warps, requests files, and reads cached world state. Settings come from `~/.gc_mcp.json`, the file named by `GC_MCP_CONFIG`, or the `GC_*` environment variables listed at the top of the script. Keep the settings file and any key file out of the repository.
+
+Register it with an MCP client by running `python examples/gc_mcp.py` as a stdio server.
+
 ## Minimal Flow
 
 ```c
